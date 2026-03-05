@@ -1,0 +1,7 @@
+../Drivers/STM32C0xx_HAL_Driver/Inc/stm32c0xx_ll_system.h:1430:22:LL_FLASH_SetLatency	16	static
+../Drivers/STM32C0xx_HAL_Driver/Inc/stm32c0xx_ll_system.h:1442:26:LL_FLASH_GetLatency	8	static
+../Drivers/STM32C0xx_HAL_Driver/Inc/stm32c0xx_ll_utils.h:231:22:LL_InitTick	16	static
+../Drivers/STM32C0xx_HAL_Driver/Src/stm32c0xx_ll_utils.c:71:6:LL_Init1msTick	16	static
+../Drivers/STM32C0xx_HAL_Driver/Src/stm32c0xx_ll_utils.c:87:6:LL_mDelay	24	static
+../Drivers/STM32C0xx_HAL_Driver/Src/stm32c0xx_ll_utils.c:153:6:LL_SetSystemCoreClock	16	static
+../Drivers/STM32C0xx_HAL_Driver/Src/stm32c0xx_ll_utils.c:178:13:LL_SetFlashLatency	32	static
