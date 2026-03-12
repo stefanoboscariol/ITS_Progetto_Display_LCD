@@ -11,7 +11,7 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-#include <string.h>   // aggiunta per seriale
+#include <string.h>
 #include <stdio.h>
 #include "string.h"
 #include <ctype.h>
@@ -31,40 +31,74 @@
 
 /* Private variables ---------------------------------------------------------*/
 
+I2C_HandleTypeDef hi2c1;
+
 UART_HandleTypeDef huart2;
 
 /* USER CODE BEGIN PV */
-// Variabile semaforo: 1 = il display si aggiorna, 0 = in pausa
-volatile uint8_t lcd_running = 1;
+volatile uint8_t lcd_running = 1;  // Variabile semaforo: 1 = il display si aggiorna, 0 = in pausa
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_USART2_UART_Init(void);
+static void MX_I2C1_Init(void);
 /* USER CODE BEGIN PFP */
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+#define LPS22HH_ADDR       0xBA     // Indirizzo del sensore sul bus I2C
+
+#define LPS22HH_CTRL_REG1  0x10     // Registro per accendere il sensore
+
+#define LPS22HH_TEMP_L     0x2B     // Registri dove il sensore scrive la temperatura
+#define LPS22HH_TEMP_H     0x2C
+
+// Funzione che ACCENDE il sensore
+void LPS22HH_Init(void) {
+    uint8_t config = 0x32;
+    HAL_I2C_Mem_Write(&hi2c1, LPS22HH_ADDR, LPS22HH_CTRL_REG1,
+                      I2C_MEMADD_SIZE_8BIT, &config, 1, HAL_MAX_DELAY);
+}
+
+// Funzione che LEGGE la temperatura dal sensore
+int16_t LPS22HH_ReadTemp(void) {
+    uint8_t status = 0;
+    uint32_t timeout = 1000;
+
+    // Aspetta finché il sensore non dice "dato pronto"
+    while (!(status & 0x02) && timeout > 0) {
+        HAL_I2C_Mem_Read(&hi2c1, LPS22HH_ADDR, 0x27,
+                         I2C_MEMADD_SIZE_8BIT, &status, 1, HAL_MAX_DELAY);
+        timeout--;
+    }
+
+    // Ora leggi la temperatura
+    uint8_t raw[2];
+    HAL_I2C_Mem_Read(&hi2c1, LPS22HH_ADDR, LPS22HH_TEMP_L,
+                     I2C_MEMADD_SIZE_8BIT, raw, 2, HAL_MAX_DELAY);
+    return (int16_t)((raw[1] << 8) | raw[0]);
+}
 
 
 
 void LCD_Pulse_EN(void) {
-    // 1. Piccolissimo ritardo per far stabilizzare i dati prima di dare l'Enable (Setup Time)
+    // 1. Ritardo per far stabilizzare i dati prima di dare l'Enable (Setup Time)
     for(volatile int x=0; x<5; x++);
 
     // 2. Alza Enable
     LL_GPIO_SetOutputPin(LCD_EN_GPIO_Port, LCD_EN_Pin);
-    for(volatile int x=0; x<20; x++); // Ritardo per fargli leggere il dato
+    for(volatile int x=0; x<20; x++);                    // Ritardo per fargli leggere il dato
 
     // 3. Abbassa Enable
     LL_GPIO_ResetOutputPin(LCD_EN_GPIO_Port, LCD_EN_Pin);
-    for(volatile int x=0; x<20; x++); // Ritardo di Hold Time
+    for(volatile int x=0; x<20; x++);                    // Ritardo di Hold Time
 }
 
 void LCD_Send_Nibble(uint8_t nibble) {
-    // DB4..DB7
+
     if (nibble & 0x01) LL_GPIO_SetOutputPin(LCD_DB4_GPIO_Port, LCD_DB4_Pin);
     else               LL_GPIO_ResetOutputPin(LCD_DB4_GPIO_Port, LCD_DB4_Pin);
 
@@ -85,7 +119,7 @@ void LCD_WaitBusy(void) {
     uint8_t isBusy = 1;
     uint32_t timeout = 50000;
 
-    // FONDAMENTALE: Imposta TUTTI i pin dati come INPUT prima di leggere!
+    // FONDAMENTALE: Imposta TUTTI i pin dati come INPUT prima di leggere
     LL_GPIO_SetPinMode(LCD_DB4_GPIO_Port, LCD_DB4_Pin, LL_GPIO_MODE_INPUT);
     LL_GPIO_SetPinMode(LCD_DB5_GPIO_Port, LCD_DB5_Pin, LL_GPIO_MODE_INPUT);
     LL_GPIO_SetPinMode(LCD_DB6_GPIO_Port, LCD_DB6_Pin, LL_GPIO_MODE_INPUT);
@@ -121,21 +155,19 @@ void LCD_WaitBusy(void) {
 }
 
 void LCD_Send_Byte(uint8_t byte, uint8_t isData) {
-    // 1. Aspetta la conferma dal display usando il Flag (velocissimo!)
-    LCD_WaitBusy();
+    HAL_Delay(2);
 
-    // 2. Invia i dati
     LL_GPIO_ResetOutputPin(LCD_RW_GPIO_Port, LCD_RW_Pin);
 
     if (isData) LL_GPIO_SetOutputPin(LCD_RS_GPIO_Port, LCD_RS_Pin);
     else        LL_GPIO_ResetOutputPin(LCD_RS_GPIO_Port, LCD_RS_Pin);
 
-    LCD_Send_Nibble(byte >> 4);   // nibble alto
-    LCD_Send_Nibble(byte & 0x0F); // nibble basso
+    LCD_Send_Nibble(byte >> 4);
+    LCD_Send_Nibble(byte & 0x0F);
 }
 
 void LCD_Init(void) {
-    HAL_Delay(50); // attesa power-on
+    HAL_Delay(50);       // attesa power-on
 
     // Inizializzazione 4-bit forzata a mano (senza leggere il flag)
     LL_GPIO_ResetOutputPin(LCD_RS_GPIO_Port, LCD_RS_Pin);
@@ -146,11 +178,11 @@ void LCD_Init(void) {
     LCD_Send_Nibble(0x03); HAL_Delay(1);
     LCD_Send_Nibble(0x02); HAL_Delay(1); // passa a 4-bit
 
-    // Da qui in poi Send_Byte userà il Busy Flag per viaggiare al massimo!
-    LCD_Send_Byte(0x28, 0); // 4-bit, 2 righe, 5x8
-    LCD_Send_Byte(0x0C, 0); // display ON, cursore OFF
-    LCD_Send_Byte(0x06, 0); // incremento automatico
-    LCD_Send_Byte(0x01, 0); // clear display
+    // Da qui in poi Send_Byte userà il Busy Flag
+    LCD_Send_Byte(0x28, 0);               // 4-bit, 2 righe, 5x8
+    LCD_Send_Byte(0x0C, 0);               // display ON, cursore OFF
+    LCD_Send_Byte(0x06, 0);               // incremento automatico
+    LCD_Send_Byte(0x01, 0);               // clear display
 }
 
 void LCD_Print(const char *str) {
@@ -196,12 +228,20 @@ int main(void)
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
   MX_USART2_UART_Init();
+  MX_I2C1_Init();
   /* USER CODE BEGIN 2 */
+  // Accendi il sensore
+  LPS22HH_Init();
+  HAL_Delay(100); // aspetta 100ms che si stabilizzi
+
+  // Manda un messaggio di "benvenuto" sulla seriale
+  char msg[] = "=== Avvio lettura temperatura ===\r\n";
+  HAL_UART_Transmit(&huart2, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
   LCD_Init();
 
   // Variabili richieste prima del ciclo while
-  uint8_t i = 0;
-  char buff[16];
+ // uint8_t i = 0;
+  //char buff[16];
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -212,31 +252,53 @@ int main(void)
 
     /* USER CODE BEGIN 3 */
 
+	  int16_t raw_temp = LPS22HH_ReadTemp();                                           // Leggi la temperatura grezza dal sensore
+
+
+	  int intero   = raw_temp / 100;                                                   // Trasforma in gradi leggibili (es: 2350 → 23.5)
+	  int decimale = (raw_temp % 100) / 10;
+
+
+	  char buffer[64];                                                                 // Prepara la stringa da mandare
+	  sprintf(buffer, "Temperatura: %d.%d C\r\n", intero, decimale);
+
+
+	  HAL_UART_Transmit(&huart2, (uint8_t*)buffer, strlen(buffer), HAL_MAX_DELAY);     // Manda sulla seriale verso il PC
+
+	  char lcd_buf[16];	                                                               // Mostra la temperatura sull'LCD
+	  sprintf(lcd_buf, "Temp: %d.%d C", intero, decimale);
+	  LCD_Set_Cursor(0, 0);                                                            // prima riga
+	  LCD_Print(lcd_buf);
+
+
+	  HAL_Delay(500);                                                                // Aspetta 0.5 secondi prima di leggere di nuovo
+
+//	  VECCHIO CODICE
     // Se il semaforo è verde (1), aggiorna il display
-    if (lcd_running == 1)
+    //if (lcd_running == 1)
     {
-        LCD_Send_Byte(0x01, 0); // lcdSendCmd(0x01) -> Pulisce il display
+       // LCD_Send_Byte(0x01, 0); // lcdSendCmd(0x01) -> Pulisce il display
         // RIMOSSO HAL_Delay(2); perché c'è il Busy Flag!
 
         // Stampa sulla prima riga
-        sprintf(buff, "Char %4d -> ", i);
-        LCD_Set_Cursor(0, 0);
-        LCD_Print(buff);
-        LCD_Send_Byte(i, 1);    // lcdSendChar(i) -> Invia il singolo carattere ASCII
+       // sprintf(buff, "Char %4d -> ", i);
+       // LCD_Set_Cursor(0, 0);
+       // LCD_Print(buff);
+      //  LCD_Send_Byte(i, 1);    // lcdSendChar(i) -> Invia il singolo carattere ASCII
 
         // Stampa sulla seconda riga (in Esadecimale)
-        sprintf(buff, "Char 0x%02X -> %c", i, i);
-        LCD_Set_Cursor(1, 0);
-        LCD_Print(buff);
+       // sprintf(buff, "Char 0x%02X -> %c", i, i);
+       // LCD_Set_Cursor(1, 0);
+        //LCD_Print(buff);
 
-        i += 1; // Passa al carattere successivo
-        char uart_msg[40];
-        		sprintf(uart_msg, "Char %4d -> %c\r\nChar 0x%02X -> %c\r\n\r\n", i, isprint(i) ? i : '.', i, isprint(i) ? i : '.');
-                HAL_UART_Transmit(&huart2, (uint8_t*)uart_msg, strlen(uart_msg), HAL_MAX_DELAY);
+      //  i += 1; // Passa al carattere successivo
+        //char uart_msg[40];
+        	//	sprintf(uart_msg, "Char %4d -> %c\r\nChar 0x%02X -> %c\r\n\r\n", i, isprint(i) ? i : '.', i, isprint(i) ? i : '.');
+              //  HAL_UART_Transmit(&huart2, (uint8_t*)uart_msg, strlen(uart_msg), HAL_MAX_DELAY);
     }
 
     // Aspetta in ogni caso 750ms prima di ripetere il ciclo
-    HAL_Delay(750);
+   // HAL_Delay(750);
 
   }
   /* USER CODE END 3 */
@@ -276,6 +338,54 @@ void SystemClock_Config(void)
   {
     Error_Handler();
   }
+}
+
+/**
+  * @brief I2C1 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_I2C1_Init(void)
+{
+
+  /* USER CODE BEGIN I2C1_Init 0 */
+
+  /* USER CODE END I2C1_Init 0 */
+
+  /* USER CODE BEGIN I2C1_Init 1 */
+
+  /* USER CODE END I2C1_Init 1 */
+  hi2c1.Instance = I2C1;
+  hi2c1.Init.Timing = 0x10805D88;
+  hi2c1.Init.OwnAddress1 = 0;
+  hi2c1.Init.AddressingMode = I2C_ADDRESSINGMODE_7BIT;
+  hi2c1.Init.DualAddressMode = I2C_DUALADDRESS_DISABLE;
+  hi2c1.Init.OwnAddress2 = 0;
+  hi2c1.Init.OwnAddress2Masks = I2C_OA2_NOMASK;
+  hi2c1.Init.GeneralCallMode = I2C_GENERALCALL_DISABLE;
+  hi2c1.Init.NoStretchMode = I2C_NOSTRETCH_DISABLE;
+  if (HAL_I2C_Init(&hi2c1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+
+  /** Configure Analogue filter
+  */
+  if (HAL_I2CEx_ConfigAnalogFilter(&hi2c1, I2C_ANALOGFILTER_ENABLE) != HAL_OK)
+  {
+    Error_Handler();
+  }
+
+  /** Configure Digital filter
+  */
+  if (HAL_I2CEx_ConfigDigitalFilter(&hi2c1, 0) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN I2C1_Init 2 */
+
+  /* USER CODE END I2C1_Init 2 */
+
 }
 
 /**
@@ -444,19 +554,19 @@ static void MX_GPIO_Init(void)
   */
 void EXTI4_15_IRQHandler(void)
 {
-  // Verifica se l'interrupt è stato generato dalla linea 13 sul fronte di salita (RISING)
-  if (LL_EXTI_IsActiveRisingFlag_0_31(LL_EXTI_LINE_13) != RESET)
+
+  if (LL_EXTI_IsActiveRisingFlag_0_31(LL_EXTI_LINE_13) != RESET)          // Verifica se l'interrupt è stato generato dalla linea 13 sul fronte di salita (RISING)
   {
-    // 1. Pulisce la flag dell'interrupt RISING (FONDAMENTALE)
-    LL_EXTI_ClearRisingFlag_0_31(LL_EXTI_LINE_13);
+
+    LL_EXTI_ClearRisingFlag_0_31(LL_EXTI_LINE_13);                        // 1. Pulisce la flag dell'interrupt RISING (FONDAMENTALE)
 
     // 2. Controllo anti-rimbalzo (Debouncing)
-    // Memorizza l'ultimo momento in cui hai premuto il tasto
-    static uint32_t ultimo_istante_pressione = 0;
-    uint32_t istante_attuale = HAL_GetTick(); // Prende il tempo in millisecondi
 
-    // Se sono passati almeno 200 millisecondi dall'ultima pressione vera...
-    if ((istante_attuale - ultimo_istante_pressione) > 200)
+    static uint32_t ultimo_istante_pressione = 0;                          // Memorizza l'ultimo momento in cui hai premuto il tasto
+    uint32_t istante_attuale = HAL_GetTick();                              // Prende il tempo in millisecondi
+
+
+    if ((istante_attuale - ultimo_istante_pressione) > 200)               // Se sono passati almeno 200 millisecondi dall'ultima pressione vera
     {
         // 3. Inverti lo stato di esecuzione (se era 1 diventa 0, se 0 diventa 1)
         lcd_running = !lcd_running;
@@ -464,8 +574,8 @@ void EXTI4_15_IRQHandler(void)
         // 4. Inverti il LED per avere un feedback visivo immediato
         LL_GPIO_TogglePin(INTERNAL_LED_GPIO_Port, INTERNAL_LED_Pin);
 
-        // Salva il tempo di questa pressione
-        ultimo_istante_pressione = istante_attuale;
+
+        ultimo_istante_pressione = istante_attuale;                     // Salva il tempo di questa pressione
     }
   }
 }
