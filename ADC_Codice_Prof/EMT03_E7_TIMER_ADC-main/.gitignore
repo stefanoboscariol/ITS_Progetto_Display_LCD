@@ -1,0 +1,36 @@
+# --- File di compilazione (Output) ---
+Debug/
+Release/
+bin/
+obj/
+
+# --- File specifici di STM32CubeIDE / Eclipse ---
+.settings/
+.launches/
+*.launch
+
+# --- File di configurazione locale dell'utente ---
+.gdbinit
+.project
+.cproject
+# Nota: Alcuni preferiscono tenere .project e .cproject per condividere la struttura.
+# Se lavori da solo o in un team con lo stesso setup, puoi commentare le due righe sopra.
+
+# --- File temporanei e di log ---
+*.log
+*.tmp
+*.bak
+
+# --- Risultati della compilazione (estensioni comuni) ---
+*.elf
+*.bin
+*.hex
+*.map
+*.list
+*.o
+*.d
+*.su
+
+# --- File del Sistema Operativo ---
+.DS_Store
+Thumbs.db
